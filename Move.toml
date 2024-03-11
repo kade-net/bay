@@ -1,0 +1,19 @@
+[package]
+name = "bay"
+version = "1.0.0"
+authors = []
+
+[addresses]
+bay="0x76bdc3f1893ef51175cf8fe41223632bf2795feb903582a803e8facb0a74ff29"
+kade="0xe519b74fd94be761a4879e5db5e6e1ea113697c69be5664eb053123a00a03334"
+[dev-addresses]
+
+[dependencies.AptosFramework]
+git = "https://github.com/aptos-labs/aptos-core.git"
+rev = "mainnet"
+subdir = "aptos-move/framework/aptos-framework"
+[dependencies.KADE_NETWORK]
+git = "https://github.com/kade-net/network.git"
+rev = "main"
+
+[dev-dependencies]
