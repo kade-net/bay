@@ -21,12 +21,15 @@ module bay::community {
     use aptos_framework::timestamp;
     use aptos_token_objects::collection;
     use aptos_token_objects::token;
+    use bay::anchor;
     use kade::usernames;
     use kade::accounts;
     #[test_only]
     use aptos_framework::event::emitted_events;
 
     const SEED: vector<u8> = b"BAY COMMUNITIES V_0_0_1";
+
+    const COMMUNITY_CREATION_ANCHOR_AMOUNT: u64 = 2500;
 
     const COLLECTION_NAME: vector<u8> = b"KADE COMMUNITIES V_0_0_1";
     const COLLECTION_DESCRIPTION: vector<u8> = b"A collection of all communities on kade.";
@@ -47,6 +50,7 @@ module bay::community {
     const EMEMBERSHIP_NOT_INACTIVE: u64 = 22;
     const EADDRESS_NOT_OWNER: u64 = 23;
     const ECANNOT_MAKE_MEMBER_OWNER: u64 = 24;
+    const EOPERATION_NOT_PERMITTED: u64 = 25;
 
 
     struct CommunityRegistry has key, store {
@@ -218,25 +222,14 @@ module bay::community {
 
     }
 
-    public entry fun user_create_community(user: &signer, username: string::String, community_name: string::String, community_description: string::String, community_rules: string::String) acquires CommunityRegistry, Community {
-        // TODO: add charge for action
-        let user_address = signer::address_of(user);
-        create_community(user_address, community_name, community_description, community_rules);
-        let owns_username = usernames::is_address_username_owner(user_address, username);
-
-        assert!(owns_username, EDOES_NOT_OWN_USERNAME);
-
-        create_membership(user_address, username, community_name, 0);
-    }
-
-    public entry fun delegate_create_community(delegate: &signer, username: string::String, community_name: string::String, community_description: string::String, community_rules: string::String) acquires CommunityRegistry, Community {
-        // TODO: add charge for action
-        let (account_kid, user_address) = accounts::delegate_get_owner(signer::address_of(delegate));
-        assert!(account_kid != 0, EDELEGATE_NOT_REGISTERED);
-        create_community(user_address, community_name, community_description, community_rules);
+    public entry fun admin_create_community(admin: &signer, user_address: address, username: string::String, community_name: string::String, community_description: string::String, community_rules: string::String ) acquires CommunityRegistry, Community {
+        assert!(signer::address_of(admin) == @bay, EOPERATION_NOT_PERMITTED);
         let owns_username = usernames::is_address_username_owner(user_address, username);
         assert!(owns_username, EDOES_NOT_OWN_USERNAME);
+        create_community(user_address, community_name, community_description, community_rules);
         create_membership(user_address, username, community_name, 0);
+        // PAY FOR COMMUNITY CREATION
+        anchor::transfer(admin, user_address, @bay, COMMUNITY_CREATION_ANCHOR_AMOUNT);
     }
 
     fun create_membership(user_address: address, username: string::String, community_name: string::String, type: u64) acquires CommunityRegistry, Community {
@@ -299,33 +292,16 @@ module bay::community {
 
     }
 
-    public entry fun user_create_membership(user: &signer, username: string::String, community: string::String) acquires CommunityRegistry, Community, Membership {
-
-        let user_address = signer::address_of(user);
+    public entry fun admin_create_membership(admin: &signer, user_address: address, username: string::String, community_name: string::String) acquires  CommunityRegistry, Community, Membership {
+        assert!(signer::address_of(admin) == @bay, EOPERATION_NOT_PERMITTED);
+        assert_user_exists(&user_address);
         let owns_username = usernames::is_address_username_owner(user_address, username);
-
         assert!(owns_username, EDOES_NOT_OWN_USERNAME);
-        let is_reclaimable = is_membership_inactive(signer::address_of(user), username, community);
-
-        if(is_reclaimable){
-            reclaim_membership(user_address, username, community);
+        let is_membership_reclaimable = is_membership_inactive(user_address, username, community_name);
+        if(is_membership_reclaimable){
+            reclaim_membership(user_address, username, community_name);
         }else{
-            create_membership(user_address, username, community, 2);
-        }
-
-    }
-
-    public entry  fun delegate_create_membership(delegate: &signer, username: string::String, community: string::String) acquires CommunityRegistry, Community, Membership {
-        let delegate_address = signer::address_of(delegate);
-        let (account_kid, account_address) = accounts::delegate_get_owner(delegate_address);
-        assert!(account_kid != 0, EDELEGATE_NOT_REGISTERED);
-        let owns_username = usernames::is_address_username_owner(account_address, username);
-        assert!(owns_username, EDOES_NOT_OWN_USERNAME);
-        let is_claimable = is_membership_inactive(account_address, username, community);
-        if(is_claimable){
-            reclaim_membership(account_address, username, community);
-        }else {
-            create_membership(account_address, username, community, 2);
+            create_membership(user_address, username, community_name, 2);
         }
     }
 
@@ -366,18 +342,11 @@ module bay::community {
 
     }
 
-    public entry fun delegate_delete_membership(delegate: &signer, username: string::String, community: string::String) acquires Membership, Community {
-        let (account_kid, account_address) = accounts::delegate_get_owner(signer::address_of(delegate));
-        assert!(account_kid != 0, EDELEGATE_NOT_REGISTERED);
-        assert_user_owns_membership(account_address, &username, &community);
-        delete_membership(account_address, username, community);
-    }
-
-    public entry fun user_delete_membership(user: &signer, username: string::String, community: string::String) acquires  Membership, Community {
-        let (account_kid, _)  = accounts::get_account(signer::address_of(user));
-        assert!(account_kid != 0, EUSER_NOT_REGISTERED);
-        assert_user_owns_membership(signer::address_of(user), &username, &community);
-        delete_membership(signer::address_of(user), username, community);
+    public entry fun admin_delete_membership(admin: &signer, user_address: address, username: string::String, community: string::String) acquires Membership, Community {
+        assert!(signer::address_of(admin) == @bay, EOPERATION_NOT_PERMITTED);
+        assert_user_exists(&user_address);
+        assert_user_owns_membership(user_address, &username, &community);
+        delete_membership(user_address, username, community);
     }
 
     fun reclaim_membership(user_address: address, username: string::String, community: string::String) acquires  Membership {
@@ -437,23 +406,13 @@ module bay::community {
     }
 
 
-    public entry fun user_change_membership(user: &signer, host_username: string::String, member_address: address, member_username: string::String, community: string::String, newMembershipType: u64) acquires  Community, Membership {
-
-        let user_address = signer::address_of(user);
-
+    public entry fun admin_change_membership(admin: &signer, user_address: address, host_username: string::String, member_address: address, member_username: string::String, community: string::String, type: u64) acquires  Community, Membership {
+        assert!(signer::address_of(admin) == @bay, EOPERATION_NOT_PERMITTED);
         assert_user_exists(&user_address);
         assert_user_exists(&member_address);
-
-        change_membership_type(user_address, host_username, member_address, member_username, community, newMembershipType);
-
-    }
-
-    public entry fun delegate_add_host(delegate: &signer, host_username: string::String, member_address: address, member_username: string::String, community: string::String, newMembershipType: u64) acquires  Community, Membership {
-        let user_address = get_account_address_from_delegate(signer::address_of(delegate));
-        assert_user_exists(&user_address);
-        assert_user_exists(&member_address);
-
-        change_membership_type(user_address, host_username, member_address, member_username, community, newMembershipType);
+        assert_user_owns_membership(user_address, &host_username, &community);
+        assert_user_owns_membership(member_address, &member_username, &community);
+        change_membership_type(user_address, host_username, member_address, member_username, community, type);
     }
 
 
@@ -613,51 +572,17 @@ module bay::community {
         usernames::dependancy_test_init_module(&kade_account);
         accounts::dependancy_test_init_module(&kade_account);
         init_module(&admin_signer);
+        anchor::test_init_module(&admin_signer);
+
 
         usernames::claim_username(&user, string::utf8(b"bay"));
         accounts::create_account(&user, string::utf8(b"bay"));
 
-        user_create_community(&user, lUSERNAME, lCOMMUNITY_NAME, lCOMMUNITY_DESCRIPTION, lCOMMUNITY_RULES);
+        anchor::mint(&admin_signer, signer::address_of(&user), COMMUNITY_CREATION_ANCHOR_AMOUNT);
+        admin_create_community(&admin_signer, signer::address_of(&user), lUSERNAME, lCOMMUNITY_NAME, lCOMMUNITY_DESCRIPTION, lCOMMUNITY_RULES);
 
         let expected_community_token_address = token::create_token_address(&resource_address, &string::utf8(COLLECTION_NAME), &lCOMMUNITY_NAME);
         assert!(exists<Community>(expected_community_token_address), 2);
-
-        let community_create_events = emitted_events<CommunityRegisteredEvent>();
-        let membership_create_events = emitted_events<MemberJoinEvent>();
-        assert!(vector::length(&community_create_events) == 1, 0);
-        assert!(vector::length(&membership_create_events) == 1, 1);
-    }
-
-    #[test]
-    fun test_create_community_as_delegate() acquires CommunityRegistry, Community {
-        let lUSERNAME = string::utf8(b"bay");
-        let lCOMMUNITY_NAME = string::utf8(b"the bay");
-        let lCOMMUNITY_DESCRIPTION = string::utf8(b"coolest");
-        let lCOMMUNITY_RULES = string::utf8(b"some rules");
-
-        let admin_signer = account::create_account_for_test(@bay);
-        let _second_user_signer = account::create_account_for_test(@0x6);
-        let _second_delegate_signer = account::create_account_for_test(@0x7);
-        let delegate_signer = account::create_account_for_test(@0x5);
-        let user = account::create_account_for_test(@0x4);
-        let aptos_account = account::create_account_for_test(@0x1);
-        let kade_account = account::create_account_for_test(@kade);
-        timestamp::set_time_has_started_for_testing(&aptos_account);
-
-        usernames::dependancy_test_init_module(&kade_account);
-        accounts::dependancy_test_init_module(&kade_account);
-        init_module(&admin_signer);
-
-        usernames::claim_username(&user, lUSERNAME);
-        accounts::create_account_and_add_delegate(&user, &delegate_signer, lUSERNAME);
-
-        delegate_create_community(
-            &delegate_signer,
-            lUSERNAME,
-            lCOMMUNITY_NAME,
-            lCOMMUNITY_DESCRIPTION,
-            lCOMMUNITY_RULES
-        );
 
         let community_create_events = emitted_events<CommunityRegisteredEvent>();
         let membership_create_events = emitted_events<MemberJoinEvent>();
@@ -682,19 +607,20 @@ module bay::community {
         usernames::dependancy_test_init_module(&kade_account);
         accounts::dependancy_test_init_module(&kade_account);
         init_module(&admin_signer);
+        anchor::test_init_module(&admin_signer);
 
         usernames::claim_username(&user, string::utf8(b"bay"));
         usernames::claim_username(&second_user, secondUserName);
         accounts::create_account(&user, string::utf8(b"bay"));
         accounts::create_account(&second_user, secondUserName);
+        anchor::mint(&admin_signer, signer::address_of(&user), COMMUNITY_CREATION_ANCHOR_AMOUNT);
+        admin_create_community(&admin_signer, signer::address_of(&user), string::utf8(b"bay"), lCOMMUNITY_NAME, lCOMMUNITY_DESCRIPTION, lCOMMUNITY_DESCRIPTION );
 
-        user_create_community(&user, string::utf8(b"bay"), lCOMMUNITY_NAME, lCOMMUNITY_DESCRIPTION, lCOMMUNITY_DESCRIPTION );
-
-        user_create_membership(&second_user, secondUserName, lCOMMUNITY_NAME);
+        admin_create_membership(&admin_signer, signer::address_of(&second_user), secondUserName, lCOMMUNITY_NAME);
         let mem_token = token::create_token_address(&resource_address, &lCOMMUNITY_NAME, &secondUserName);
         assert!(exists<Membership>(mem_token), EMEMBERSHIP_DOES_NOT_EXIST);
 
-        user_delete_membership(&second_user, secondUserName, lCOMMUNITY_NAME);
+        admin_delete_membership(&admin_signer, signer::address_of(&second_user), secondUserName, lCOMMUNITY_NAME);
 
         let membership_address = token::create_token_address(&resource_address, &lCOMMUNITY_NAME, &secondUserName);
 
@@ -724,19 +650,21 @@ module bay::community {
         usernames::dependancy_test_init_module(&kade_account);
         accounts::dependancy_test_init_module(&kade_account);
         init_module(&admin_signer);
+        anchor::test_init_module(&admin_signer);
 
         usernames::claim_username(&user, string::utf8(b"bay"));
         usernames::claim_username(&second_user, secondUserName);
         accounts::create_account(&user, string::utf8(b"bay"));
         accounts::create_account(&second_user, secondUserName);
 
-        user_create_community(&user, string::utf8(b"bay"), lCOMMUNITY_NAME, lCOMMUNITY_DESCRIPTION, lCOMMUNITY_DESCRIPTION );
+        anchor::mint(&admin_signer, signer::address_of(&user), COMMUNITY_CREATION_ANCHOR_AMOUNT);
+        admin_create_community(&admin_signer,signer::address_of(&user), string::utf8(b"bay"), lCOMMUNITY_NAME, lCOMMUNITY_DESCRIPTION, lCOMMUNITY_DESCRIPTION );
 
-        user_create_membership(&second_user, secondUserName, lCOMMUNITY_NAME);
+        admin_create_membership(&admin_signer,signer::address_of(&second_user), secondUserName, lCOMMUNITY_NAME);
         let mem_token = token::create_token_address(&resource_address, &lCOMMUNITY_NAME, &secondUserName);
         assert!(exists<Membership>(mem_token), EMEMBERSHIP_DOES_NOT_EXIST);
 
-        user_delete_membership(&second_user, secondUserName, lCOMMUNITY_NAME);
+        admin_delete_membership(&admin_signer,signer::address_of(&second_user), secondUserName, lCOMMUNITY_NAME);
 
         let membership_address = token::create_token_address(&resource_address, &lCOMMUNITY_NAME, &secondUserName);
 
@@ -744,7 +672,7 @@ module bay::community {
         assert!(object::owns(membership_object_record, resource_address), 2);
         assert!(!object::owns(membership_object_record, signer::address_of(&user)), 3);
 
-        user_create_membership(&second_user, secondUserName, lCOMMUNITY_NAME);
+        admin_create_membership(&admin_signer, signer::address_of(&second_user), secondUserName, lCOMMUNITY_NAME);
         let mem_token = token::create_token_address(&resource_address, &lCOMMUNITY_NAME, &secondUserName);
         assert!(exists<Membership>(mem_token), EMEMBERSHIP_DOES_NOT_EXIST);
 
@@ -771,19 +699,20 @@ module bay::community {
         usernames::dependancy_test_init_module(&kade_account);
         accounts::dependancy_test_init_module(&kade_account);
         init_module(&admin_signer);
-
+        anchor::test_init_module(&admin_signer);
         usernames::claim_username(&user, string::utf8(b"bay"));
         usernames::claim_username(&second_user, secondUserName);
         accounts::create_account(&user, string::utf8(b"bay"));
         accounts::create_account(&second_user, secondUserName);
 
-        user_create_community(&user, string::utf8(b"bay"), lCOMMUNITY_NAME, lCOMMUNITY_DESCRIPTION, lCOMMUNITY_DESCRIPTION );
+        anchor::mint(&admin_signer, signer::address_of(&user), COMMUNITY_CREATION_ANCHOR_AMOUNT);
+        admin_create_community(&admin_signer, signer::address_of(&user), string::utf8(b"bay"), lCOMMUNITY_NAME, lCOMMUNITY_DESCRIPTION, lCOMMUNITY_DESCRIPTION );
 
-        user_create_membership(&second_user, secondUserName, lCOMMUNITY_NAME);
+        admin_create_membership(&admin_signer,signer::address_of(&second_user), secondUserName, lCOMMUNITY_NAME);
         let mem_token = token::create_token_address(&resource_address, &lCOMMUNITY_NAME, &secondUserName);
         assert!(exists<Membership>(mem_token), EMEMBERSHIP_DOES_NOT_EXIST);
 
-        user_change_membership(&user, string::utf8(b"bay"), signer::address_of(&second_user), secondUserName, lCOMMUNITY_NAME, 1 );
+        admin_change_membership(&admin_signer,signer::address_of(&user), string::utf8(b"bay"), signer::address_of(&second_user), secondUserName, lCOMMUNITY_NAME, 1 );
 
         let mem_token = token::create_token_address(&resource_address, &lCOMMUNITY_NAME, &secondUserName);
         let membership = borrow_global<Membership>(mem_token);
