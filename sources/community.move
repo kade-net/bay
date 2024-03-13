@@ -64,7 +64,7 @@ module bay::community {
     struct Community has key, store {
         name: string::String,
         description: string::String,
-        rules: string::String,
+        image: string::String,
         creator: address,
         hosts: vector<address>,
         created: u64,
@@ -78,7 +78,7 @@ module bay::community {
     struct  CommunityRegisteredEvent has store, drop {
         name: string::String,
         description: string::String,
-        rules: string::String,
+        image: string::String,
         creator: address,
         bid: u64,
         user_kid: u64,
@@ -158,7 +158,7 @@ module bay::community {
         })
     }
 
-    fun create_community(user_address: address, community_name: string::String, community_description: string::String, community_rules: string::String) acquires CommunityRegistry {
+    fun create_community(user_address: address, community_name: string::String, community_description: string::String, community_image: string::String) acquires CommunityRegistry {
         assert_name_available(&community_name);
         let resource_address = account::create_resource_address(&@bay,SEED);
         let registry = borrow_global_mut<CommunityRegistry>(resource_address);
@@ -195,7 +195,7 @@ module bay::community {
             created: timestamp::now_seconds(),
             creator: user_address,
             hosts: vector::empty(),
-            rules: community_rules,
+            image: community_image,
             total_memberships: 0,
             membership_transfer_ref: object::generate_transfer_ref(&community_constructor_ref)
         };
@@ -213,7 +213,7 @@ module bay::community {
         emit(CommunityRegisteredEvent {
             creator: user_address,
             timestamp: timestamp::now_seconds(),
-            rules: community_rules,
+            image: community_image,
             description: community_description,
             bid,
             name: community_name,
@@ -222,11 +222,11 @@ module bay::community {
 
     }
 
-    public entry fun admin_create_community(admin: &signer, user_address: address, username: string::String, community_name: string::String, community_description: string::String, community_rules: string::String ) acquires CommunityRegistry, Community {
+    public entry fun admin_create_community(admin: &signer, user_address: address, username: string::String, community_name: string::String, community_description: string::String, image: string::String ) acquires CommunityRegistry, Community {
         assert!(signer::address_of(admin) == @bay, EOPERATION_NOT_PERMITTED);
         let owns_username = usernames::is_address_username_owner(user_address, username);
         assert!(owns_username, EDOES_NOT_OWN_USERNAME);
-        create_community(user_address, community_name, community_description, community_rules);
+        create_community(user_address, community_name, community_description, image);
         create_membership(user_address, username, community_name, 0);
         // PAY FOR COMMUNITY CREATION
         anchor::transfer(admin, user_address, @bay, COMMUNITY_CREATION_ANCHOR_AMOUNT);
@@ -246,14 +246,13 @@ module bay::community {
         let community = borrow_global_mut<Community>(community_address);
 
 
-
         let constructor_ref  = token::create_named_token(
             &resource_signer,
             community_name,
             username,
             username,
             option::none(),
-            string::utf8(COLLECTION_URI),
+            community.image,
         );
 
         let token_signer = object::generate_signer(&constructor_ref);

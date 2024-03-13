@@ -4,7 +4,7 @@ version = "1.0.0"
 authors = []
 
 [addresses]
-bay="0x76bdc3f1893ef51175cf8fe41223632bf2795feb903582a803e8facb0a74ff29"
+bay="0x3df401e14e282835d6c2e5cae4db40d6e36e3781b0f622f24382c5a03b566f44"
 kade="0xe519b74fd94be761a4879e5db5e6e1ea113697c69be5664eb053123a00a03334"
 [dev-addresses]
 
