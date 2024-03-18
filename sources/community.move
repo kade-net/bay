@@ -51,6 +51,7 @@ module bay::community {
     const EADDRESS_NOT_OWNER: u64 = 23;
     const ECANNOT_MAKE_MEMBER_OWNER: u64 = 24;
     const EOPERATION_NOT_PERMITTED: u64 = 25;
+    const ENOT_COMMUNITY_CREATOR: u64 = 26;
 
 
     struct CommunityRegistry has key, store {
@@ -71,7 +72,9 @@ module bay::community {
         bid: u64,
         total_memberships: u64,
         transfer_ref: TransferRef,
-        membership_transfer_ref: TransferRef
+        membership_transfer_ref: TransferRef,
+        community_mutator_ref: collection::MutatorRef,
+        token_mutator_ref: token::MutatorRef
     }
 
     #[event]
@@ -80,6 +83,17 @@ module bay::community {
         description: string::String,
         image: string::String,
         creator: address,
+        bid: u64,
+        user_kid: u64,
+        timestamp: u64,
+    }
+
+    #[event]
+    struct CommunityUpdateEvent has store, drop {
+        name: string::String,
+        description: string::String,
+        image: string::String,
+        display_name: string::String,
         bid: u64,
         user_kid: u64,
         timestamp: u64,
@@ -174,7 +188,6 @@ module bay::community {
             string::utf8(COLLECTION_URI)
         );
 
-
         let constructor_ref = token::create_named_token(
             &resource_signer,
             string::utf8(COLLECTION_NAME),
@@ -197,7 +210,9 @@ module bay::community {
             hosts: vector::empty(),
             image: community_image,
             total_memberships: 0,
-            membership_transfer_ref: object::generate_transfer_ref(&community_constructor_ref)
+            membership_transfer_ref: object::generate_transfer_ref(&community_constructor_ref),
+            community_mutator_ref: collection::generate_mutator_ref(&community_constructor_ref),
+            token_mutator_ref: token::generate_mutator_ref(&constructor_ref)
         };
 
         move_to(&token_signer, community);
@@ -205,6 +220,9 @@ module bay::community {
         let record_object = object::object_from_constructor_ref<Community>(&constructor_ref);
 
         object::transfer(&resource_signer, record_object, user_address);
+
+        object::disable_ungated_transfer(&object::generate_transfer_ref(&constructor_ref));
+        object::disable_ungated_transfer(&object::generate_transfer_ref(&community_constructor_ref));
 
         registry.registered_communities = registry.registered_communities + 1;
 
@@ -267,7 +285,6 @@ module bay::community {
             type,
             community_id: community.bid
         };
-        let bid = membership.membership_number;
 
 
         move_to(&token_signer, membership);
@@ -275,6 +292,7 @@ module bay::community {
         let record_object = object::object_from_constructor_ref<Membership>(&constructor_ref);
 
         object::transfer(&resource_signer, record_object, user_address);
+        object::disable_ungated_transfer(&object::generate_transfer_ref(&constructor_ref));
 
         community.total_memberships = community.total_memberships + 1;
 
@@ -283,7 +301,7 @@ module bay::community {
         emit(MemberJoinEvent {
             user_kid,
             community_name,
-            bid,
+            bid: community.total_memberships + 1,
             timestamp: timestamp::now_seconds(),
             owner: user_address,
             type
@@ -404,7 +422,6 @@ module bay::community {
         })
     }
 
-
     public entry fun admin_change_membership(admin: &signer, user_address: address, host_username: string::String, member_address: address, member_username: string::String, community: string::String, type: u64) acquires  Community, Membership {
         assert!(signer::address_of(admin) == @bay, EOPERATION_NOT_PERMITTED);
         assert_user_exists(&user_address);
@@ -414,7 +431,47 @@ module bay::community {
         change_membership_type(user_address, host_username, member_address, member_username, community, type);
     }
 
+    fun update_community(user_address: address, username: string::String, community: string::String, description: string::String, displayName: string::String, image: string::String) acquires Community {
+        let resource_address = account::create_resource_address(&@bay, SEED);
+        let community_token_address = token::create_token_address(&resource_address, &string::utf8(COLLECTION_NAME), &community);
+        assert!(exists<Community>(community_token_address), ECOMMUNITY_DOES_NOT_EXIST);
+        let community = borrow_global_mut<Community>(community_token_address);
+        assert!(community.creator == user_address, ENOT_COMMUNITY_CREATOR);
+        let membership_address = token::create_token_address(&resource_address, &community.name, &username);
+        assert!(exists<Membership>(membership_address), EMEMBERSHIP_DOES_NOT_EXIST);
+        let membership_record_obj = object::address_to_object<Membership>(membership_address);
+        assert!(object::is_owner(membership_record_obj, user_address), EUSER_DOES_NOT_OWN_MEMBERSHIP);
 
+        community.description = description;
+        community.image = image;
+
+        token::set_description(&community.token_mutator_ref, description);
+        token::set_description(&community.token_mutator_ref, image);
+
+
+        let (user_kid, _) = accounts::get_account(user_address);
+
+        emit(CommunityUpdateEvent {
+            name: community.name,
+            display_name: displayName,
+            timestamp: timestamp::now_seconds(),
+            user_kid,
+            bid: community.bid,
+            description,
+            image
+        })
+
+    }
+
+
+    public entry fun admin_update_community(admin: &signer, user_address: address, username: string::String, community: string::String, description: string::String, displayName: string::String, image: string::String) acquires Community {
+        assert!(signer::address_of(admin) == @bay, EOPERATION_NOT_PERMITTED);
+        assert_user_exists(&user_address);
+        assert_community_exists(&community);
+        assert_user_owns_membership(user_address, &username, &community);
+
+        update_community(user_address, username, community, description, displayName, image);
+    }
 
 
 
@@ -537,6 +594,11 @@ module bay::community {
     // ==========
     // Tests
     // ==========
+
+    #[test_only]
+    public entry fun test_invoke_init_module(admin: &signer) {
+        init_module(admin)
+    }
 
     #[test]
     fun test_init_module() {
@@ -723,4 +785,47 @@ module bay::community {
         assert!(vector::length(&membership_change_events) == 1, 6);
     }
 
+    #[test]
+    fun test_update_community()  acquires CommunityRegistry, Community {
+        let lUSERNAME = string::utf8(b"bay");
+        let lCOMMUNITY_NAME = string::utf8(b"the bay");
+        let lCOMMUNITY_DESCRIPTION = string::utf8(b"coolest");
+        let lCOMMUNITY_RULES = string::utf8(b"some rules");
+        let resource_address = account::create_resource_address(&@bay, SEED);
+
+        let admin_signer = account::create_account_for_test(@bay);
+        let user = account::create_account_for_test(@0x4);
+        let aptos_account =account::create_account_for_test(@0x1);
+        let kade_account = account::create_account_for_test(@kade);
+        timestamp::set_time_has_started_for_testing(&aptos_account);
+
+        usernames::dependancy_test_init_module(&kade_account);
+        accounts::dependancy_test_init_module(&kade_account);
+        init_module(&admin_signer);
+        anchor::test_init_module(&admin_signer);
+
+
+        usernames::claim_username(&user, string::utf8(b"bay"));
+        accounts::create_account(&user, string::utf8(b"bay"));
+
+        anchor::mint(&admin_signer, signer::address_of(&user), COMMUNITY_CREATION_ANCHOR_AMOUNT);
+        admin_create_community(&admin_signer, signer::address_of(&user), lUSERNAME, lCOMMUNITY_NAME, lCOMMUNITY_DESCRIPTION, lCOMMUNITY_RULES);
+
+        let expected_community_token_address = token::create_token_address(&resource_address, &string::utf8(COLLECTION_NAME), &lCOMMUNITY_NAME);
+        assert!(exists<Community>(expected_community_token_address), 2);
+
+        let community_create_events = emitted_events<CommunityRegisteredEvent>();
+        let membership_create_events = emitted_events<MemberJoinEvent>();
+        assert!(vector::length(&community_create_events) == 1, 0);
+        assert!(vector::length(&membership_create_events) == 1, 1);
+
+        admin_update_community(&admin_signer, signer::address_of(&user), lUSERNAME,lCOMMUNITY_NAME, lCOMMUNITY_DESCRIPTION, lUSERNAME, string::utf8(
+            b""
+        ) );
+
+        let community_update_events = emitted_events<CommunityUpdateEvent>();
+        assert!(vector::length(&community_update_events) == 1, 0);
+
+
+    }
 }

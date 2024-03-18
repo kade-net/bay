@@ -7,11 +7,17 @@ module bay::anchor {
     use std::option;
     use std::signer;
     use std::string;
+    #[test_only]
+    use aptos_framework::account;
+    use aptos_framework::event::emit;
     use aptos_framework::fungible_asset;
     use aptos_framework::fungible_asset::{MintRef, TransferRef, BurnRef, Metadata};
     use aptos_framework::object;
     use aptos_framework::primary_fungible_store;
+    use aptos_framework::timestamp;
     use kade::accounts;
+    #[test_only]
+    use kade::usernames;
 
 
     const SEED: vector<u8> = b"ANCHOR V0_0_1";
@@ -27,6 +33,21 @@ module bay::anchor {
         mint_ref: MintRef,
         transfer_ref: TransferRef,
         burn_ref: BurnRef
+    }
+
+    #[event]
+    struct AnchorMintEvent has store, drop {
+        user_kid: u64,
+        amount: u64,
+        timestamp: u64
+    }
+
+    #[event]
+    struct AnchorTransferEvent has store, drop {
+        user_kid: u64,
+        receiver_user_kid: u64,
+        amount: u64,
+        timestamp: u64
     }
 
 
@@ -67,6 +88,15 @@ module bay::anchor {
         let to_wallet = primary_fungible_store::ensure_primary_store_exists(to, asset);
         let fa = fungible_asset::mint(&managed_fungible_asset.mint_ref, amount);
         fungible_asset::deposit_with_ref(&managed_fungible_asset.transfer_ref, to_wallet, fa);
+        fungible_asset::set_frozen_flag(&managed_fungible_asset.transfer_ref, to_wallet, true);
+
+        let (user_kid, _) = accounts::get_account(to);
+
+        emit(AnchorMintEvent {
+            amount,
+            timestamp: timestamp::now_seconds(),
+            user_kid
+        })
     }
 
     public entry fun transfer(admin: &signer, from: address, to: address, amount: u64) acquires ManagedFungibleAsset {
@@ -75,6 +105,16 @@ module bay::anchor {
         let from_wallet = primary_fungible_store::primary_store(from, asset);
         let to_wallet = primary_fungible_store::ensure_primary_store_exists(to, asset);
         fungible_asset::transfer_with_ref(transfer_ref, from_wallet, to_wallet, amount);
+
+        let (from_kid, _) = accounts::get_account(from);
+        let (to_kid, __) = accounts::get_account(to);
+
+        emit(AnchorTransferEvent {
+            user_kid: from_kid,
+            receiver_user_kid: to_kid,
+            timestamp: timestamp::now_seconds(),
+            amount
+        })
     }
 
     public entry fun burn(admin: &signer, from: address, amount: u64) acquires ManagedFungibleAsset {
@@ -117,11 +157,16 @@ module bay::anchor {
     // ===============
     // View Functions
     // ===============
-
-    #[view]
-    public fun get_metadata(): object::Object<Metadata> {
+    inline fun get_metadata(): object::Object<Metadata> {
         let asset_address = object::create_object_address(&@bay, ASSET_SYMBOL);
         object::address_to_object<Metadata>(asset_address,)
+    }
+
+    #[view]
+    public fun get_balance(address: address): u64 {
+        let metadata = get_metadata();
+        let balance = primary_fungible_store::balance(address, metadata);
+        balance
     }
 
     // ================
@@ -147,6 +192,58 @@ module bay::anchor {
     #[test_only]
     public fun test_init_module(admin: &signer) {
         init_module(admin);
+    }
+
+    #[test]
+    #[expected_failure(abort_code=65539)]
+    public fun test_ungated_transfer_of_asset_fails() acquires  ManagedFungibleAsset {
+        let admin = account::create_account_for_test(@bay);
+        let aptos_framework = account::create_account_for_test(@std);
+        let user = account::create_account_for_test(@0x7);
+        let user2 = account::create_account_for_test(@0x8);
+        let kade = account::create_account_for_test(@kade);
+        timestamp::set_time_has_started_for_testing(&aptos_framework);
+
+        usernames::dependancy_test_init_module(&kade);
+        accounts::dependancy_test_init_module(&kade);
+        init_module(&admin);
+
+        accounts::account_setup_with_self_delegate(&user, string::utf8(b"user"));
+        accounts::account_setup_with_self_delegate(&user2, string::utf8(b"user2"));
+
+        mint(&admin, signer::address_of(&user), 50000);
+
+        let metadata = get_metadata();
+
+        primary_fungible_store::transfer(&user, metadata, signer::address_of(&user2), 2000);
+
+    }
+
+    #[test]
+    public fun test_transfer_of_asset_success() acquires  ManagedFungibleAsset {
+        let admin = account::create_account_for_test(@bay);
+        let aptos_framework = account::create_account_for_test(@std);
+        let user = account::create_account_for_test(@0x7);
+        let user2 = account::create_account_for_test(@0x8);
+        let kade = account::create_account_for_test(@kade);
+        timestamp::set_time_has_started_for_testing(&aptos_framework);
+
+        usernames::dependancy_test_init_module(&kade);
+        accounts::dependancy_test_init_module(&kade);
+        init_module(&admin);
+
+        accounts::account_setup_with_self_delegate(&user, string::utf8(b"user"));
+        accounts::account_setup_with_self_delegate(&user2, string::utf8(b"user2"));
+
+        mint(&admin, signer::address_of(&user), 50000);
+
+        transfer(&admin, signer::address_of(&user), signer::address_of(&user2), 20000);
+
+        let user_1_balance = get_balance(signer::address_of(&user));
+        let user_2_balance = get_balance(signer::address_of(&user2));
+
+        assert!(user_1_balance == 30000, 3);
+        assert!(user_2_balance == 20000, 4);
     }
 
 }
