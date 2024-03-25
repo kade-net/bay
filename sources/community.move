@@ -27,13 +27,13 @@ module bay::community {
     #[test_only]
     use aptos_framework::event::emitted_events;
 
-    const SEED: vector<u8> = b"BAY COMMUNITIES V_0_0_1";
+    const SEED: vector<u8> = b"BAY COMMUNITIES V1";
 
     const COMMUNITY_CREATION_ANCHOR_AMOUNT: u64 = 2500;
 
-    const COLLECTION_NAME: vector<u8> = b"KADE COMMUNITIES V_0_0_1";
+    const COLLECTION_NAME: vector<u8> = b"KADE COMMUNITIES V1";
     const COLLECTION_DESCRIPTION: vector<u8> = b"A collection of all communities on kade.";
-    const COLLECTION_URI: vector<u8> = b"https://kade.network";
+    const COLLECTION_URI: vector<u8> = b"https://orange-urban-sloth-806.mypinata.cloud/ipfs/QmZeaZ5QpXLt2M2NVsY4YNn6QK8VzwwBQgbfD94ovn2qdH";
 
 
     const ECOMMUNITY_NAME_TAKEN: u64 = 11;
@@ -636,10 +636,10 @@ module bay::community {
         anchor::test_init_module(&admin_signer);
 
 
-        usernames::claim_username(&user, string::utf8(b"bay"));
+        usernames::gd_claim_username(&kade_account, string::utf8(b"bay"), signer::address_of(&user));
         accounts::create_account(&user, string::utf8(b"bay"));
 
-        anchor::mint(&admin_signer, signer::address_of(&user), COMMUNITY_CREATION_ANCHOR_AMOUNT);
+        anchor::mint(&admin_signer, &user,0, COMMUNITY_CREATION_ANCHOR_AMOUNT);
         admin_create_community(&admin_signer, signer::address_of(&user), lUSERNAME, lCOMMUNITY_NAME, lCOMMUNITY_DESCRIPTION, lCOMMUNITY_RULES);
 
         let expected_community_token_address = token::create_token_address(&resource_address, &string::utf8(COLLECTION_NAME), &lCOMMUNITY_NAME);
@@ -670,11 +670,11 @@ module bay::community {
         init_module(&admin_signer);
         anchor::test_init_module(&admin_signer);
 
-        usernames::claim_username(&user, string::utf8(b"bay"));
-        usernames::claim_username(&second_user, secondUserName);
+        usernames::gd_claim_username(&kade_account, string::utf8(b"bay"), signer::address_of(&user));
+        usernames::gd_claim_username(&kade_account, secondUserName, signer::address_of(&second_user));
         accounts::create_account(&user, string::utf8(b"bay"));
         accounts::create_account(&second_user, secondUserName);
-        anchor::mint(&admin_signer, signer::address_of(&user), COMMUNITY_CREATION_ANCHOR_AMOUNT);
+        anchor::mint(&admin_signer, &user, 0, COMMUNITY_CREATION_ANCHOR_AMOUNT);
         admin_create_community(&admin_signer, signer::address_of(&user), string::utf8(b"bay"), lCOMMUNITY_NAME, lCOMMUNITY_DESCRIPTION, lCOMMUNITY_DESCRIPTION );
 
         admin_create_membership(&admin_signer, signer::address_of(&second_user), secondUserName, lCOMMUNITY_NAME);
@@ -713,12 +713,12 @@ module bay::community {
         init_module(&admin_signer);
         anchor::test_init_module(&admin_signer);
 
-        usernames::claim_username(&user, string::utf8(b"bay"));
-        usernames::claim_username(&second_user, secondUserName);
+        usernames::gd_claim_username(&kade_account,  string::utf8(b"bay"), signer::address_of(&user));
+        usernames::gd_claim_username(&kade_account, secondUserName, signer::address_of(&second_user) );
         accounts::create_account(&user, string::utf8(b"bay"));
         accounts::create_account(&second_user, secondUserName);
 
-        anchor::mint(&admin_signer, signer::address_of(&user), COMMUNITY_CREATION_ANCHOR_AMOUNT);
+        anchor::mint(&admin_signer, &user,0, COMMUNITY_CREATION_ANCHOR_AMOUNT);
         admin_create_community(&admin_signer,signer::address_of(&user), string::utf8(b"bay"), lCOMMUNITY_NAME, lCOMMUNITY_DESCRIPTION, lCOMMUNITY_DESCRIPTION );
 
         admin_create_membership(&admin_signer,signer::address_of(&second_user), secondUserName, lCOMMUNITY_NAME);
@@ -761,12 +761,12 @@ module bay::community {
         accounts::dependancy_test_init_module(&kade_account);
         init_module(&admin_signer);
         anchor::test_init_module(&admin_signer);
-        usernames::claim_username(&user, string::utf8(b"bay"));
-        usernames::claim_username(&second_user, secondUserName);
+        usernames::gd_claim_username(&kade_account, string::utf8(b"bay"), signer::address_of(&user));
+        usernames::gd_claim_username(&kade_account, secondUserName, signer::address_of(&second_user) );
         accounts::create_account(&user, string::utf8(b"bay"));
         accounts::create_account(&second_user, secondUserName);
 
-        anchor::mint(&admin_signer, signer::address_of(&user), COMMUNITY_CREATION_ANCHOR_AMOUNT);
+        anchor::mint(&admin_signer, &user,0, COMMUNITY_CREATION_ANCHOR_AMOUNT);
         admin_create_community(&admin_signer, signer::address_of(&user), string::utf8(b"bay"), lCOMMUNITY_NAME, lCOMMUNITY_DESCRIPTION, lCOMMUNITY_DESCRIPTION );
 
         admin_create_membership(&admin_signer,signer::address_of(&second_user), secondUserName, lCOMMUNITY_NAME);
@@ -805,10 +805,10 @@ module bay::community {
         anchor::test_init_module(&admin_signer);
 
 
-        usernames::claim_username(&user, string::utf8(b"bay"));
+        usernames::gd_claim_username(&kade_account, string::utf8(b"bay"), signer::address_of(&user));
         accounts::create_account(&user, string::utf8(b"bay"));
 
-        anchor::mint(&admin_signer, signer::address_of(&user), COMMUNITY_CREATION_ANCHOR_AMOUNT);
+        anchor::mint(&admin_signer, &user, 0, COMMUNITY_CREATION_ANCHOR_AMOUNT);
         admin_create_community(&admin_signer, signer::address_of(&user), lUSERNAME, lCOMMUNITY_NAME, lCOMMUNITY_DESCRIPTION, lCOMMUNITY_RULES);
 
         let expected_community_token_address = token::create_token_address(&resource_address, &string::utf8(COLLECTION_NAME), &lCOMMUNITY_NAME);

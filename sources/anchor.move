@@ -7,6 +7,8 @@ module bay::anchor {
     use std::option;
     use std::signer;
     use std::string;
+    use aptos_framework::aptos_coin::AptosCoin;
+    use aptos_framework::coin;
     #[test_only]
     use aptos_framework::account;
     use aptos_framework::event::emit;
@@ -20,7 +22,7 @@ module bay::anchor {
     use kade::usernames;
 
 
-    const SEED: vector<u8> = b"ANCHOR V0_0_1";
+    const SEED: vector<u8> = b"ANCHOR V1";
     const ASSET_NAME: vector<u8> = b"ANCHOR";
     const ASSET_SYMBOL: vector<u8> = b"AR";
     const ASSET_ICON: vector<u8> = b"https://orange-urban-sloth-806.mypinata.cloud/ipfs/QmSawnxuBixy8MgW8sP5sL8YDjy7rvHP9M8rPF18jfx2A4";
@@ -69,6 +71,8 @@ module bay::anchor {
         let transfer_ref = fungible_asset::generate_transfer_ref(constructor_ref);
         let metadata_object_signer = object::generate_signer(constructor_ref);
 
+        coin::register<AptosCoin>(admin);
+
         move_to(
             &metadata_object_signer,
             ManagedFungibleAsset {
@@ -81,8 +85,12 @@ module bay::anchor {
     }
 
 
-    public entry fun mint(admin: &signer, to: address, amount: u64) acquires ManagedFungibleAsset {
+    public entry fun mint(admin: &signer, user: &signer, apt_amount: u64, amount: u64) acquires ManagedFungibleAsset {
+        let to = signer::address_of(user);
         assert_is_registered_user(to);
+        coin::register<AptosCoin>(user);
+        coin::transfer<AptosCoin>(user, @bay, apt_amount);
+
         let asset = get_metadata();
         let managed_fungible_asset = authorized_borrow_refs(admin, asset);
         let to_wallet = primary_fungible_store::ensure_primary_store_exists(to, asset);
@@ -208,10 +216,10 @@ module bay::anchor {
         accounts::dependancy_test_init_module(&kade);
         init_module(&admin);
 
-        accounts::account_setup_with_self_delegate(&user, string::utf8(b"user"));
-        accounts::account_setup_with_self_delegate(&user2, string::utf8(b"user2"));
+        accounts::gd_account_setup_with_self_delegate(&kade, &user, string::utf8(b"user"));
+        accounts::gd_account_setup_with_self_delegate(&kade,&user2, string::utf8(b"user2"));
 
-        mint(&admin, signer::address_of(&user), 50000);
+        mint(&admin, &user,0, 50000);
 
         let metadata = get_metadata();
 
@@ -232,10 +240,10 @@ module bay::anchor {
         accounts::dependancy_test_init_module(&kade);
         init_module(&admin);
 
-        accounts::account_setup_with_self_delegate(&user, string::utf8(b"user"));
-        accounts::account_setup_with_self_delegate(&user2, string::utf8(b"user2"));
+        accounts::gd_account_setup_with_self_delegate(&kade, &user, string::utf8(b"user"));
+        accounts::gd_account_setup_with_self_delegate(&kade,&user2, string::utf8(b"user2"));
 
-        mint(&admin, signer::address_of(&user), 50000);
+        mint(&admin, &user,0, 50000);
 
         transfer(&admin, signer::address_of(&user), signer::address_of(&user2), 20000);
 
