@@ -147,6 +147,8 @@ module bay::pearls {
             let token_signer = object::generate_signer(&token_constructor_ref);
             let burn_ref = token::generate_burn_ref(&token_constructor_ref);
             let transfer_ref = object::generate_transfer_ref(&token_constructor_ref);
+            let linear_ref = object::generate_linear_transfer_ref(&transfer_ref);
+            object::transfer_with_ref(linear_ref, user_address);
 
             if(meta.is_gated || meta.is_soul_bound){
                 object::disable_ungated_transfer(&transfer_ref);
