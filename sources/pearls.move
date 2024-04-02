@@ -32,7 +32,8 @@ module bay::pearls {
         anchor_amount: u64,
         is_soul_bound: bool,
         mut_ref: MutatorRef,
-        uri: string::String
+        uri: string::String,
+        description: string::String
     }
 
     struct NonBoundToken has store, drop, key {
@@ -77,7 +78,8 @@ module bay::pearls {
                 is_gated,
                 is_soul_bound,
                 mut_ref: collection::generate_mutator_ref(&constructor_ref),
-                uri
+                uri,
+                description
             };
 
             let object_signer = object::generate_signer(&constructor_ref);
@@ -101,7 +103,8 @@ module bay::pearls {
                 is_gated,
                 is_soul_bound,
                 mut_ref: collection::generate_mutator_ref(&constructor_ref),
-                uri
+                uri,
+                description
             };
 
             let object_signer = object::generate_signer(&constructor_ref);
@@ -138,7 +141,7 @@ module bay::pearls {
             let token_constructor_ref = token::create(
                 &resource_signer,
                 collection_name,
-                username,
+                meta.description,
                 username,
                 option::none(),
                 mint_uri

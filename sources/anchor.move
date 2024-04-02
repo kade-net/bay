@@ -3,17 +3,17 @@
 **/
 
 module bay::anchor {
-
     use std::option;
     use std::signer;
     use std::string;
+    use std::vector;
+    use aptos_std::simple_map;
+    use aptos_std::simple_map::SimpleMap;
+    use aptos_framework::account;
     use aptos_framework::aptos_coin::AptosCoin;
     use aptos_framework::coin;
-    #[test_only]
-    use aptos_framework::account;
-    use aptos_framework::event::emit;
-    use aptos_framework::fungible_asset;
-    use aptos_framework::fungible_asset::{MintRef, TransferRef, BurnRef, Metadata};
+    use aptos_framework::event;
+    use aptos_framework::fungible_asset::{Self, MintRef, TransferRef, BurnRef, Metadata};
     use aptos_framework::object;
     use aptos_framework::primary_fungible_store;
     use aptos_framework::timestamp;
@@ -30,11 +30,26 @@ module bay::anchor {
 
     const EPERMISSION_DENIED: u64 = 1;
     const EUSER_NOT_REGISTERED: u64 = 2;
+    const EORDER_QUEUE_FULL: u64 = 3;
+    const EORDER_ALREADY_IN_QUEUE: u64 = 4;
+    const ENOEXISTING_ORDER: u64 = 5;
 
     struct ManagedFungibleAsset has key {
         mint_ref: MintRef,
         transfer_ref: TransferRef,
         burn_ref: BurnRef
+    }
+
+    struct Order has drop, store, copy {
+        initiator: address,
+        apt_amount: u64,
+        anchors_requested: u64,
+        timestamp: u64
+    }
+
+    struct State has key {
+        signer_capability: account::SignerCapability,
+        orders: SimpleMap<address, Order> // max length will always be 100
     }
 
     #[event]
@@ -54,7 +69,8 @@ module bay::anchor {
 
 
     fun init_module(admin: &signer) {
-        let constructor_ref = &object::create_named_object(admin, ASSET_SYMBOL);
+        let (resource_signer, signer_capability) = account::create_resource_account(admin, SEED);
+        let constructor_ref = &object::create_named_object(&resource_signer, ASSET_SYMBOL);
 
         primary_fungible_store::create_primary_store_enabled_fungible_asset(
             constructor_ref,
@@ -80,19 +96,83 @@ module bay::anchor {
                 burn_ref,
                 transfer_ref
             }
-        )
+        );
+
+        move_to(&resource_signer, State {
+            signer_capability,
+            orders: simple_map::new()
+        })
+
+    }
+
+    public entry fun create_anchor_order(admin: &signer, apt_amount: u64, anchor_amount: u64, user_address: address) acquires State {
+        assert_is_registered_user(user_address);
+        assert!(signer::address_of(admin) == @bay, EPERMISSION_DENIED);
+        let resource_address = account::create_resource_address(&@bay, SEED);
+        let state = borrow_global_mut<State>(resource_address);
+
+        let current_unfullfilled_orders = simple_map::length(&state.orders);
+
+        assert!(current_unfullfilled_orders < 100, EORDER_QUEUE_FULL);
+
+        let exists = simple_map::contains_key(&state.orders, &user_address);
+
+        if(exists){
+            simple_map::remove(&mut state.orders, &user_address);
+        };
+
+        simple_map::add(&mut state.orders,user_address, Order {
+            apt_amount,
+            anchors_requested: anchor_amount,
+            initiator: user_address,
+            timestamp: timestamp::now_microseconds()
+        })
+
+    }
+
+    public entry fun clean_anchor_order(admin: &signer, user_address: address) acquires State {
+        assert!(signer::address_of(admin) == @bay, EPERMISSION_DENIED);
+        let resource_address = account::create_resource_address(&@bay, SEED);
+        let state = borrow_global_mut<State>(resource_address);
+
+        simple_map::remove(&mut state.orders, &user_address);
+
+    }
+
+    public entry fun user_confirm_order(user: &signer) acquires State, ManagedFungibleAsset {
+        let user_address = signer::address_of(user);
+        assert_is_registered_user(user_address);
+
+        let resource_address = account::create_resource_address(&@bay, SEED);
+        let state = borrow_global_mut<State>(resource_address);
+
+        let has_existing_order = simple_map::contains_key(&state.orders, &user_address);
+
+        assert!(has_existing_order, ENOEXISTING_ORDER);
+
+        let order = simple_map::borrow(&state.orders, &user_address);
+
+        // register
+        coin::register<AptosCoin>(user);
+        // charge:
+        coin::transfer<AptosCoin>(user,@bay, order.apt_amount);
+
+        // mint
+        internal_mint(user_address, order.anchors_requested);
+
+        // clean
+        simple_map::remove(&mut state.orders, &user_address);
 
     }
 
 
-    public entry fun mint(admin: &signer, user: &signer, apt_amount: u64, amount: u64) acquires ManagedFungibleAsset {
-        let to = signer::address_of(user);
-        assert_is_registered_user(to);
-        coin::register<AptosCoin>(user);
-        coin::transfer<AptosCoin>(user, @bay, apt_amount);
 
+
+    fun internal_mint(user_address: address, amount: u64) acquires ManagedFungibleAsset {
+        let to = user_address;
+        assert_is_registered_user(to);
         let asset = get_metadata();
-        let managed_fungible_asset = authorized_borrow_refs(admin, asset);
+        let managed_fungible_asset = authorized_borrow_refs(asset);
         let to_wallet = primary_fungible_store::ensure_primary_store_exists(to, asset);
         let fa = fungible_asset::mint(&managed_fungible_asset.mint_ref, amount);
         fungible_asset::deposit_with_ref(&managed_fungible_asset.transfer_ref, to_wallet, fa);
@@ -100,7 +180,7 @@ module bay::anchor {
 
         let (user_kid, _) = accounts::get_account(to);
 
-        emit(AnchorMintEvent {
+        event::emit(AnchorMintEvent {
             amount,
             timestamp: timestamp::now_seconds(),
             user_kid
@@ -108,8 +188,9 @@ module bay::anchor {
     }
 
     public entry fun transfer(admin: &signer, from: address, to: address, amount: u64) acquires ManagedFungibleAsset {
+        assert!(signer::address_of(admin) == @bay, EPERMISSION_DENIED);
         let asset = get_metadata();
-        let transfer_ref = &authorized_borrow_refs(admin, asset).transfer_ref;
+        let transfer_ref = &authorized_borrow_refs(asset).transfer_ref;
         let from_wallet = primary_fungible_store::primary_store(from, asset);
         let to_wallet = primary_fungible_store::ensure_primary_store_exists(to, asset);
         fungible_asset::transfer_with_ref(transfer_ref, from_wallet, to_wallet, amount);
@@ -117,7 +198,7 @@ module bay::anchor {
         let (from_kid, _) = accounts::get_account(from);
         let (to_kid, __) = accounts::get_account(to);
 
-        emit(AnchorTransferEvent {
+        event::emit(AnchorTransferEvent {
             user_kid: from_kid,
             receiver_user_kid: to_kid,
             timestamp: timestamp::now_seconds(),
@@ -125,37 +206,42 @@ module bay::anchor {
         })
     }
 
-    public entry fun burn(admin: &signer, from: address, amount: u64) acquires ManagedFungibleAsset {
+    public entry fun admin_burn(admin: &signer, from: address, amount: u64) acquires ManagedFungibleAsset {
+        assert!(signer::address_of(admin) == @bay, EPERMISSION_DENIED);
         let asset = get_metadata();
-        let burn_ref = &authorized_borrow_refs(admin, asset).burn_ref;
+        let burn_ref = &authorized_borrow_refs(asset).burn_ref;
         let from_wallet = primary_fungible_store::primary_store(from, asset);
         fungible_asset::burn_from(burn_ref, from_wallet, amount);
     }
 
-    public entry fun freeze_account(admin: &signer, account: address) acquires ManagedFungibleAsset {
+    public entry fun admin_freeze_account(admin: &signer, account: address) acquires ManagedFungibleAsset {
+        assert!(signer::address_of(admin) == @bay, EPERMISSION_DENIED);
         let asset = get_metadata();
-        let transfer_ref = &authorized_borrow_refs(admin, asset).transfer_ref;
+        let transfer_ref = &authorized_borrow_refs(asset).transfer_ref;
         let wallet = primary_fungible_store::ensure_primary_store_exists(account, asset);
         fungible_asset::set_frozen_flag(transfer_ref, wallet, true);
     }
 
-    public entry fun unfreeze_account(admin: &signer, account: address) acquires ManagedFungibleAsset {
+    public entry fun admin_unfreeze_account(admin: &signer, account: address) acquires ManagedFungibleAsset {
+        assert!(signer::address_of(admin) == @bay, EPERMISSION_DENIED);
         let asset = get_metadata();
-        let transfer_ref = &authorized_borrow_refs(admin, asset).transfer_ref;
+        let transfer_ref = &authorized_borrow_refs(asset).transfer_ref;
         let wallet = primary_fungible_store::ensure_primary_store_exists(account, asset);
         fungible_asset::set_frozen_flag(transfer_ref, wallet, false);
     }
 
-    public fun withdraw(admin: &signer, amount: u64, from: address): fungible_asset::FungibleAsset acquires ManagedFungibleAsset {
+    public fun admin_withdraw(admin: &signer, amount: u64, from: address): fungible_asset::FungibleAsset acquires ManagedFungibleAsset {
+        assert!(signer::address_of(admin) == @bay, EPERMISSION_DENIED);
         let asset = get_metadata();
-        let transfer_ref = &authorized_borrow_refs(admin, asset).transfer_ref;
+        let transfer_ref = &authorized_borrow_refs(asset).transfer_ref;
         let from_wallet = primary_fungible_store::primary_store(from, asset);
         fungible_asset::withdraw_with_ref(transfer_ref, from_wallet, amount)
     }
 
-    public fun deposit(admin: &signer, to: address, fa: fungible_asset::FungibleAsset) acquires ManagedFungibleAsset {
+    public fun admin_deposit(admin: &signer, to: address, fa: fungible_asset::FungibleAsset) acquires ManagedFungibleAsset {
+        assert!(signer::address_of(admin) == @bay, EPERMISSION_DENIED);
         let asset = get_metadata();
-        let transfer_ref = &authorized_borrow_refs(admin, asset).transfer_ref;
+        let transfer_ref = &authorized_borrow_refs(asset).transfer_ref;
         let to_wallet = primary_fungible_store::ensure_primary_store_exists(to, asset);
         fungible_asset::deposit_with_ref(transfer_ref, to_wallet, fa);
     }
@@ -166,7 +252,8 @@ module bay::anchor {
     // View Functions
     // ===============
     inline fun get_metadata(): object::Object<Metadata> {
-        let asset_address = object::create_object_address(&@bay, ASSET_SYMBOL);
+        let resource_address = account::create_resource_address(&@bay, SEED);
+        let asset_address = object::create_object_address(&resource_address, ASSET_SYMBOL);
         object::address_to_object<Metadata>(asset_address,)
     }
 
@@ -177,14 +264,29 @@ module bay::anchor {
         balance
     }
 
+    #[view]
+    public fun get_current_order(address: address): vector<Order> acquires  State {
+        let state = borrow_global<State>(address);
+        let has_existing_order = simple_map::contains_key(&state.orders, &address);
+        if(!has_existing_order){
+            return vector::empty()
+        };
+        let order = simple_map::borrow(&state.orders, &address);
+        let orders_vector = vector::empty<Order>();
+        vector::push_back(&mut orders_vector, *order);
+
+        return orders_vector
+
+    }
+
     // ================
     // Helper Functions
     // ================
     inline fun authorized_borrow_refs(
-        owner: &signer,
         asset: object::Object<Metadata>
     ): &ManagedFungibleAsset acquires ManagedFungibleAsset {
-        assert!(object::is_owner(asset, signer::address_of(owner)), EPERMISSION_DENIED);
+        let resource_address = account::create_resource_address(&@bay,SEED);
+        assert!(object::is_owner(asset, resource_address), EPERMISSION_DENIED);
         borrow_global<ManagedFungibleAsset>(object::object_address(&asset))
     }
 
@@ -202,9 +304,15 @@ module bay::anchor {
         init_module(admin);
     }
 
+    #[test_only]
+    public entry fun mint(admin: &signer, user: &signer, apt_amount: u64, anchor_amount: u64) acquires State, ManagedFungibleAsset {
+        create_anchor_order(admin ,apt_amount, anchor_amount, signer::address_of(user));
+        user_confirm_order(user);
+    }
+
     #[test]
     #[expected_failure(abort_code=65539)]
-    public fun test_ungated_transfer_of_asset_fails() acquires  ManagedFungibleAsset {
+    public fun test_ungated_transfer_of_asset_fails() acquires  ManagedFungibleAsset, State {
         let admin = account::create_account_for_test(@bay);
         let aptos_framework = account::create_account_for_test(@std);
         let user = account::create_account_for_test(@0x7);
@@ -228,7 +336,7 @@ module bay::anchor {
     }
 
     #[test]
-    public fun test_transfer_of_asset_success() acquires  ManagedFungibleAsset {
+    public fun test_transfer_of_asset_success() acquires  ManagedFungibleAsset, State {
         let admin = account::create_account_for_test(@bay);
         let aptos_framework = account::create_account_for_test(@std);
         let user = account::create_account_for_test(@0x7);
